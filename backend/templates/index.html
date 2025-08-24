@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>RTSP → Face Stream Test</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 20px;
+      }
+      #stream {
+        width: 640px;
+        height: auto;
+        border: 1px solid #ccc;
+      }
+      label {
+        display: block;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>RTSP Face Stream (test frontend)</h2>
+
+    <label
+      >RTSP URL:
+      <input
+        id="rtsp_url"
+        type="text"
+        size="60"
+        placeholder="rtsp:/192.168.1.2:554/mjpeg/1"
+      />
+      <button id="setBtn">Set stream</button>
+      <button id="stopBtn">Stop</button>
+    </label>
+
+    <label
+      >Upload placeholder image (optional):
+      <input id="placeholderFile" type="file" accept="image/*" />
+      <button id="uploadPlaceholder">Upload</button>
+    </label>
+
+    <h3>Face frames (only frames containing faces are streamed)</h3>
+    <div>
+      <img id="stream" src="/placeholder" alt="stream" />
+    </div>
+    <p>Detected faces in last frame: <span id="facesCount">0</span></p>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+      const socket = io();
+      const img = document.getElementById("stream");
+      const facesCount = document.getElementById("facesCount");
+
+      socket.on("connect", () => console.log("connected"));
+      socket.on("frame", (data) => {
+        if (data && data.image) {
+          img.src = "data:image/jpeg;base64," + data.image;
+          facesCount.textContent = data.faces || 0;
+        }
+      });
+
+      document.getElementById("setBtn").addEventListener("click", async () => {
+        const url = document.getElementById("rtsp_url").value.trim();
+        if (!url) return alert("Enter RTSP URL");
+        const res = await fetch("/set_stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rtsp_url: url }),
+        });
+        const j = await res.json();
+        if (j.ok) {
+          console.log("stream set", j.rtsp_url);
+        } else {
+          alert("Failed to set stream");
+        }
+      });
+
+      document.getElementById("stopBtn").addEventListener("click", async () => {
+        await fetch("/stop_stream", { method: "POST" });
+        // show placeholder
+        img.src = "/placeholder";
+      });
+
+      document
+        .getElementById("uploadPlaceholder")
+        .addEventListener("click", async () => {
+          const fileInput = document.getElementById("placeholderFile");
+          if (!fileInput.files.length) return alert("Choose a file");
+          const fd = new FormData();
+          fd.append("placeholder", fileInput.files[0]);
+          const res = await fetch("/upload_placeholder", {
+            method: "POST",
+            body: fd,
+          });
+          const j = await res.json();
+          if (j.ok) {
+            alert("placeholder uploaded");
+            img.src = "/placeholder";
+          } else {
+            alert("upload failed");
+          }
+        });
+    </script>
+  </body>
+</html>
