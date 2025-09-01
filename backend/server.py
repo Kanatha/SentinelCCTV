@@ -17,7 +17,6 @@ except Exception:
     eventlet = None
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'secret!'
 socketio = SocketIO(app, async_mode='eventlet' if eventlet else None, cors_allowed_origins='*')
 
 # State
@@ -128,21 +127,14 @@ def index():
 @app.route('/set_stream', methods=['POST'])
 def set_stream():
     data = request.get_json(force=True)
-    url = data.get('rtsp_url')
+    url = data.get('url')
     if not url:
-        return jsonify({'ok': False, 'error': 'rtsp_url required'}), 400
+        return jsonify({'ok': False, 'error': 'url required'}), 400
 
     with state_lock:
         state['rtsp_url'] = url
 
     return jsonify({'ok': True, 'rtsp_url': url})
-
-
-@app.route('/stop_stream', methods=['POST'])
-def stop_stream():
-    with state_lock:
-        state['rtsp_url'] = None
-    return jsonify({'ok': True})
 
 @app.route('/status')
 def status():
@@ -163,4 +155,4 @@ def on_disconnect():
 
 if __name__ == '__main__':
     # Note: using eventlet (if available) is recommended for production-like websocket behavior.
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True, use_reloader=True)

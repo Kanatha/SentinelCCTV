@@ -1,23 +1,17 @@
 import { useState } from "react";
+import Input from "./components/input";
 
+import { useTheme } from "./providers/ThemeProvider";
 function App() {
-  const [count, setCount] = useState(0);
+  const { theme, colors } = useTheme();
 
   return (
-    <>
-      <h1>Vite + React</h1>
-      <div className="card bg-blue-500">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
+    <div className="bg-[{colors.background}]">
+      <Input />
+      <p>this browser uses {theme} theme</p>
+      <p>the colors are</p>
+      <p>docker refresh works! test #6</p>
+    </div>
   );
 }
 
