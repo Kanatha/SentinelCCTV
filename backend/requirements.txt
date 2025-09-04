@@ -2,3 +2,4 @@ flask
 flask-socketio[eventlet]
 opencv-python-headless
 numpy
+psycopg2-binary>=2.9
