@@ -1,244 +1,113 @@
-from typing import Optional, Sequence, Mapping, Any, List, Dict, Tuple, Union
 import psycopg2
-from psycopg2 import sql
-from psycopg2.extras import RealDictCursor
+import psycopg2.extras
+from typing import Optional, Any, List, Union
 
 
-class PostgresClient:
+class dbProvider:
     """
-    Lightweight Postgres client using psycopg2.
+    Lightweight DB helper using psycopg2 (C extension) for good performance.
 
-    Initialize either with a DSN string (dsn=...) or connection pieces (host, port, dbname, user, password).
-    Methods:
-      - select_from_table(...)  -> fetch rows
-      - insert_into_table(...)  -> insert a dict -> returns inserted rowcount or optionally inserted id
-      - delete_from_table(...)  -> delete rows by where clause -> returns deleted rowcount
-
-    Safety notes:
-      - Table/column identifiers are composed with psycopg2.sql to avoid SQL injection.
-      - Values are passed as parameters (%s) to queries.
-      - For WHERE you can provide a dict (safe) or a raw where_sql + params (use carefully).
+    By default, SELECT/RETURNING queries return lists of lists (instead of tuples).
+    Set dict_results=True to return list[dict] instead.
     """
 
     def __init__(
         self,
         *,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
         dbname: Optional[str] = None,
         user: Optional[str] = None,
         password: Optional[str] = None,
+        host: Optional[str] = "db",
+        port: int = 5432,
         connect_timeout: int = 10,
     ) -> None:
-            self._conn_info = {
-                "host": host,
-                "port": port,
-                "dbname": dbname,
-                "user": user,
-                "password": password,
-                "connect_timeout": connect_timeout,
-            }
-            # remove None values (psycopg2 accepts missing keys)
-            self._conn_info = {k: v for k, v in self._conn_info.items() if v is not None}
+        conn_args = {}
+        if dbname is not None:
+            conn_args["dbname"] = dbname
+        if user is not None:
+            conn_args["user"] = user
+        if password is not None:
+            conn_args["password"] = password
+        conn_args["host"] = host
+        conn_args["port"] = port
+        conn_args["connect_timeout"] = connect_timeout
 
-    def connect(self):
-        """
-        Create a new psycopg2 connection. Use with context manager:
-            with client._get_connection() as conn:
-                ...
-        The connection context manager commits on success, rolls back on exception.
-        """
-        return psycopg2.connect(**self._conn_info)
+        self._conn = psycopg2.connect(**conn_args)
+        self._conn.autocommit = False
 
-    # Generic execute helper
-    def _execute(
+    def execute(
         self,
-        query: sql.SQL,
-        params: Optional[Sequence[Any]] = None,
-        fetch: Optional[str] = None,
-    ) -> Union[List[Dict[str, Any]], int, None]:
+        query: str,
+        params: Optional[Union[tuple, list]] = None,
+        *,
+        dict_results: Optional[bool] = None,
+        fetch: str = "auto",
+        raise_on_error: bool = True,
+    ) -> Union[bool, List[List[Any]], List[dict]]:
         """
-        Execute a composed sql.SQL query with params.
-        fetch: None (no fetch, returns rowcount), 'one' (fetchone), 'all' (fetchall)
-        Returns:
-          - list[dict] when fetch == 'all'
-          - dict when fetch == 'one'
-          - int (rowcount) when fetch is None
+        Execute SQL and return results according to rules:
+         - If the statement produces a result set (cursor.description), returns rows.
+         - If no result set, commits and returns True on success.
+         - On exception: rolls back. Raises or returns False per raise_on_error.
         """
-        with self.connect() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(query, params)
-                if fetch == "one":
-                    return cur.fetchone()
-                if fetch == "all":
-                    return cur.fetchall()
-                return cur.rowcount
-
-    # Placeholder method: SELECT FROM <table>
-    def select_from_table(
-        self,
-        table: str,
-        columns: Optional[Sequence[str]] = None,
-        where: Optional[Mapping[str, Any]] = None,
-        where_sql: Optional[str] = None,
-        where_params: Optional[Sequence[Any]] = None,
-        order_by: Optional[Sequence[str]] = None,
-        limit: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Select rows from a table.
-
-        - table: table name (string)
-        - columns: list of column names (default: ['*'])
-        - where: mapping of column -> value (safe). Combined with AND.
-        - where_sql: raw WHERE clause (e.g. "created_at > %s AND status = %s") plus where_params
-            Use where_sql only if you need complex conditions; prefer where dict otherwise.
-        - order_by: list of column names to order by
-        - limit: optional integer
-
-        Returns list of dictionaries (each row as dict).
-        """
-        if columns:
-            cols_sql = sql.SQL(", ").join([sql.Identifier(c) for c in columns])
-        else:
-            cols_sql = sql.SQL("*")
-
-        table_sql = sql.Identifier(table)
-
-        query = sql.SQL("SELECT {cols} FROM {table}").format(cols=cols_sql, table=table_sql)
-
-        params: List[Any] = []
-
-        # Build WHERE
-        if where:
-            where_parts = []
-            for k, v in where.items():
-                where_parts.append(sql.SQL("{} = %s").format(sql.Identifier(k)))
-                params.append(v)
-            where_sql_obj = sql.SQL(" WHERE ") + sql.SQL(" AND ").join(where_parts)
-            query = query + where_sql_obj
-        elif where_sql:
-            query = query + sql.SQL(" WHERE ") + sql.SQL(where_sql)
-            if where_params:
-                params.extend(where_params)
-
-        # ORDER BY
-        if order_by:
-            order_sql = sql.SQL(", ").join([sql.Identifier(c) for c in order_by])
-            query = query + sql.SQL(" ORDER BY ") + order_sql
-
-        # LIMIT
-        if limit is not None:
-            query = query + sql.SQL(" LIMIT %s")
-            params.append(limit)
-
-        # Execute and fetch all
-        return self._execute(query, params=params or None, fetch="all")  # type: ignore
-
-    # Placeholder method: INSERT INTO <table>
-    def insert_into_table(
-        self,
-        table: str,
-        data: Mapping[str, Any],
-        return_columns: Optional[Sequence[str]] = None,
-    ) -> Union[int, Dict[str, Any], None]:
-        """
-        Insert a row into `table` using `data` mapping column->value.
-
-        - data: mapping of column names to values. Must be non-empty.
-        - return_columns: optional list of columns to RETURNING (e.g. ['id']).
-
-        Returns:
-          - if return_columns provided: the first returned row as dict
-          - otherwise: number of rows inserted (should be 1)
-        """
-        if not data:
-            raise ValueError("`data` cannot be empty for insert.")
-
-        table_sql = sql.Identifier(table)
-        cols = list(data.keys())
-        values = list(data.values())
-
-        cols_sql = sql.SQL(", ").join([sql.Identifier(c) for c in cols])
-        placeholders = sql.SQL(", ").join(sql.Placeholder() * len(cols))
-
-        base = sql.SQL("INSERT INTO {table} ({cols}) VALUES ({vals})").format(
-            table=table_sql, cols=cols_sql, vals=placeholders
+        cursor_factory = (
+            psycopg2.extras.RealDictCursor if dict_results else None
         )
 
-        if return_columns:
-            ret_sql = sql.SQL(", ").join([sql.Identifier(c) for c in return_columns])
-            query = base + sql.SQL(" RETURNING ") + ret_sql
-            return self._execute(query, params=values, fetch="one")  # returns dict
-        else:
-            return self._execute(base, params=values, fetch=None)  # returns rowcount
+        cur = self._conn.cursor(cursor_factory=cursor_factory)
+        try:
+            if params is None:
+                cur.execute(query)
+            else:
+                cur.execute(query, params)
 
-    # Placeholder method: DELETE FROM <table>
-    def delete_from_table(
-        self,
-        table: str,
-        where: Optional[Mapping[str, Any]] = None,
-        where_sql: Optional[str] = None,
-        where_params: Optional[Sequence[Any]] = None,
-        limit: Optional[int] = None,
-    ) -> int:
-        """
-        Delete rows from `table`. Provide either `where` dict (safe) or `where_sql` + params (use carefully).
-        Returns the number of rows deleted.
-        """
-        if not where and not where_sql:
-            raise ValueError("DELETE requires a where clause (where dict or where_sql).")
+            if fetch == "one":
+                if cur.description is None:
+                    self._conn.commit()
+                    return True
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                if dict_results:
+                    return row  # already dict
+                return list(row)  # convert tuple -> list
 
-        table_sql = sql.Identifier(table)
-        query = sql.SQL("DELETE FROM {table}").format(table=table_sql)
+            if fetch == "none":
+                self._conn.commit()
+                return True
 
-        params: List[Any] = []
+            if cur.description is not None:
+                rows = cur.fetchall()
+                if dict_results:
+                    return rows  # already list of dicts
+                return [list(r) for r in rows]  # convert tuples -> lists
+            else:
+                self._conn.commit()
+                return True
 
-        if where:
-            where_parts = []
-            for k, v in where.items():
-                where_parts.append(sql.SQL("{} = %s").format(sql.Identifier(k)))
-                params.append(v)
-            query = query + sql.SQL(" WHERE ") + sql.SQL(" AND ").join(where_parts)
-        elif where_sql:
-            query = query + sql.SQL(" WHERE ") + sql.SQL(where_sql)
-            if where_params:
-                params.extend(where_params)
+        except Exception:
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
 
-        if limit is not None:
-            # Some Postgres installations support LIMIT in DELETE (Postgres supports it with USING)
-            # Simpler approach: wrap in a subquery to delete only limited rows
-            # This uses ctid which is Postgres-specific but effective for limiting.
-            query = sql.SQL("DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table}").format(
-                table=table_sql
-            )
-            # Need to re-attach the previous WHERE condition inside the subquery
-            if where:
-                # rebuild where_parts to reuse
-                where_parts = []
-                for k in where.keys():
-                    where_parts.append(sql.SQL("{} = %s").format(sql.Identifier(k)))
-                query = query + sql.SQL(" WHERE ") + sql.SQL(" AND ").join(where_parts)
-            elif where_sql:
-                query = query + sql.SQL(" WHERE ") + sql.SQL(where_sql)
-            query = query + sql.SQL(" LIMIT %s)")  # closing subquery
-            params.append(limit)
+            if raise_on_error:
+                raise
+            return False
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
 
-        return self._execute(query, params=params or None, fetch=None)  # returns rowcount
+    def close(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:
+            pass
 
+    def __enter__(self) -> "dbProvider":
+        return self
 
-# Example usage (replace credentials before running):
-if __name__ == "__main__":
-    client = PostgresClient(host="localhost", port=5432, dbname="mydb", user="me", password="secret")
-
-    # SELECT example (safe)
-    rows = client.select_from_table("users", columns=["id", "email"], where={"active": True}, limit=10)
-    print("select rows:", rows)
-
-    # INSERT example (returning id)
-    inserted = client.insert_into_table("users", {"email": "new@example.com", "active": True}, return_columns=["id"])
-    print("inserted:", inserted)
-
-    # DELETE example (safe)
-    deleted_count = client.delete_from_table("users", where={"email": "new@example.com"})
-    print("deleted rows:", deleted_count)
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()

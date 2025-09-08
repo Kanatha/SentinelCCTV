@@ -30,8 +30,8 @@ services:
     image: postgres
     restart: always
     environment:
-      POSTGRES_USER: root
-      POSTGRES_PASSWORD: Admin123
+      POSTGRES_USER: system
+      POSTGRES_PASSWORD: "0ZY/i-0+7Mlo@iovX0S,@yX"
       POSTGRES_DB: sentinel
     volumes:
       - db_data:/var/lib/postgresql/data

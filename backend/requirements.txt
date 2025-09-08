@@ -1,5 +1,8 @@
 flask
-flask-socketio[eventlet]
-opencv-python-headless
+flask-socketio
+eventlet
 numpy
-psycopg2-binary>=2.9
+opencv-python-headless
+onnx
+onnx-simplifier
+onnxruntime 

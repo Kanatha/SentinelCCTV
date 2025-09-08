@@ -2,105 +2,61 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>RTSP → Face Stream Test</title>
+    <title>Multi RTSP Viewer (YOLOv5 ONNX)</title>
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
     <style>
       body {
-        font-family: Arial, sans-serif;
-        padding: 20px;
+        font-family: Arial, Helvetica, sans-serif;
+        margin: 12px;
       }
-      #stream {
-        width: 640px;
-        height: auto;
+      .stream {
+        display: inline-block;
+        margin: 10px;
+        vertical-align: top;
+      }
+      img {
+        display: block;
+        max-width: 480px;
         border: 1px solid #ccc;
       }
-      label {
-        display: block;
-        margin-top: 8px;
+      .meta {
+        font-size: 12px;
       }
     </style>
   </head>
   <body>
-    <h2>RTSP Face Stream (test frontend)</h2>
+    <h3>Streams</h3>
+    <div id="streams"></div>
 
-    <label
-      >RTSP URL:
-      <input
-        id="rtsp_url"
-        type="text"
-        size="60"
-        placeholder="rtsp:/192.168.1.2:554/mjpeg/1"
-      />
-      <button id="setBtn">Set stream</button>
-      <button id="stopBtn">Stop</button>
-    </label>
-
-    <label
-      >Upload placeholder image (optional):
-      <input id="placeholderFile" type="file" accept="image/*" />
-      <button id="uploadPlaceholder">Upload</button>
-    </label>
-
-    <h3>Face frames (only frames containing faces are streamed)</h3>
-    <div>
-      <img id="stream" src="/placeholder" alt="stream" />
-    </div>
-    <p>Detected faces in last frame: <span id="facesCount">0</span></p>
-
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script>
       const socket = io();
-      const img = document.getElementById("stream");
-      const facesCount = document.getElementById("facesCount");
+      const containers = {};
 
-      socket.on("connect", () => console.log("connected"));
-      socket.on("frame", (data) => {
-        if (data && data.image) {
-          img.src = "data:image/jpeg;base64," + data.image;
-          facesCount.textContent = data.faces || 0;
+      socket.on("frame", (payload) => {
+        const id = payload.stream_id;
+        if (!containers[id]) {
+          const div = document.createElement("div");
+          div.className = "stream";
+          const title = document.createElement("div");
+          title.innerText = "Stream " + id;
+          const img = document.createElement("img");
+          img.alt = "stream " + id;
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          div.appendChild(title);
+          div.appendChild(img);
+          div.appendChild(meta);
+          document.getElementById("streams").appendChild(div);
+          containers[id] = { img, meta };
         }
+        containers[id].img.src = "data:image/jpeg;base64," + payload.image;
+        const dets = payload.detections
+          .map((d) => `${d.label} (${(d.score * 100).toFixed(0)}%)`)
+          .join(", ");
+        containers[id].meta.innerText = `Detections: ${
+          dets || "none"
+        } — ${new Date(payload.timestamp * 1000).toLocaleTimeString()}`;
       });
-
-      document.getElementById("setBtn").addEventListener("click", async () => {
-        const url = document.getElementById("rtsp_url").value.trim();
-        if (!url) return alert("Enter RTSP URL");
-        const res = await fetch("/set_stream", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rtsp_url: url }),
-        });
-        const j = await res.json();
-        if (j.ok) {
-          console.log("stream set", j.rtsp_url);
-        } else {
-          alert("Failed to set stream");
-        }
-      });
-
-      document.getElementById("stopBtn").addEventListener("click", async () => {
-        await fetch("/stop_stream", { method: "POST" });
-        // show placeholder
-        img.src = "/placeholder";
-      });
-
-      document
-        .getElementById("uploadPlaceholder")
-        .addEventListener("click", async () => {
-          const fileInput = document.getElementById("placeholderFile");
-          if (!fileInput.files.length) return alert("Choose a file");
-          const fd = new FormData();
-          fd.append("placeholder", fileInput.files[0]);
-          const res = await fetch("/upload_placeholder", {
-            method: "POST",
-            body: fd,
-          });
-          const j = await res.json();
-          if (j.ok) {
-            alert("placeholder uploaded");
-            img.src = "/placeholder";
-          } else {
-            alert("upload failed");
-          }
-        });
     </script>
   </body>
 </html>
